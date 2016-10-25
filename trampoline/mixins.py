@@ -28,9 +28,6 @@ class ESIndexableMixin(object):
     def is_indexable(self):
         return True
 
-    def is_index_update_needed(self):
-        return True
-
     def get_es_doc_mapping(self):
         if self.es_auto_doc_type_mapping is True:
             return self.get_es_auto_doc_mapping()
@@ -67,25 +64,26 @@ class ESIndexableMixin(object):
         return doc
 
     def es_index(self, async=True, countdown=0, index_name=None, queue=None):
-        if trampoline_config.is_disabled:
+        if trampoline_config.is_disabled or not self.is_indexable():
             return
 
         doc_type = self.get_es_doc_type()
         index_name = index_name or doc_type._doc_type.index
+        queue = queue or trampoline_config.celery_queue
 
         content_type = ContentType.objects.get_for_model(self)
         if async:
             result = es_index_object.apply_async(
                 args=(index_name, content_type.pk, self.pk),
                 countdown=countdown,
-                queue=queue or trampoline_config.celery_queue
+                queue=queue
             )
         else:
             if trampoline_config.should_fail_silently:
                 result = es_index_object.apply(
                     args=(index_name, content_type.pk, self.pk)
                 )
-            else:  # pragma: no cover
+            else:
                 result = es_index_object.run(
                     index_name,
                     content_type.pk,
@@ -100,12 +98,14 @@ class ESIndexableMixin(object):
         doc_type = self.get_es_doc_type()
         doc_type_name = doc_type._doc_type.name
         index_name = index_name or doc_type._doc_type.index
+        queue = queue or trampoline_config.celery_queue
         using = doc_type._doc_type.using
 
         if async:
+            es_delete_doc.delay(index_name, doc_type_name, self.pk, using)
             es_delete_doc.apply_async(
                 args=(index_name, doc_type_name, self.pk, using),
-                queue=queue or trampoline_config.celery_queue
+                queue=queue
             )
         else:
             es_delete_doc.apply((index_name, doc_type_name, self.pk, using))
